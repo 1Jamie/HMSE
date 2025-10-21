@@ -5,9 +5,19 @@
 This document defines the **validation, testing, and evaluation methodology** for the **HyperDrive Microcontroller Storage Engine (HMSE)**.  
 It establishes a formal process to empirically investigate the system's **compression performance**, **architectural correctness**, **resource efficiency**, and **practical viability** on microcontroller-class hardware (ESP32-S3).
 
-**Primary Research Question:** Can useful compression ratios be achieved in very low-power environments (<1W) using multi-layer data reduction?
+**Primary Research Question:** Can useful compression ratios be achieved in very low-power environments (P < 1 W) using multi-layer data reduction?
 
-**Definition of "Useful Compression":** For this research, **useful compression** is defined as achieving **CF ≥ 5:1**, which significantly exceeds typical single-pass algorithms (BZ2: ~3:1, zstd: ~3-4:1) and provides meaningful storage density improvements for embedded applications. This threshold also exceeds the baseline performance of space-grade compression standards such as [CCSDS 121.0-B-3](https://ccsds.org/wp-content/uploads/gravity_forms/5-448e85c647331d9cbaf66c096458bdd5/2025/01//121x0b3.pdf?gv-iframe=true), making HMSE potentially suitable for satellite and aerospace applications.
+**Formal Definitions:**
+- **Compression Factor (CF)**: Ratio of input size to output size, CF = S_input / S_output (unitless)
+- **Useful Compression**: CF ≥ 5:1 (defined below)
+- **Low-Power Environment**: P_avg < 1.0 W sustained during compression operation
+- **Multi-Layer Data Reduction**: Sequential application of L1 (lossless compression), L2 (content-defined chunking), L3 (exact deduplication), L4 (similarity-based delta encoding)
+
+**Definition of "Useful Compression":** For this research, **useful compression** is formally defined as:
+
+$$CF \geq 5.0 \text{ (compression factor 5:1 or greater)}$$
+
+This threshold significantly exceeds typical single-pass algorithms (BZ2: ~3:1, zstd: ~3-4:1) and provides meaningful storage density improvements for embedded applications. This threshold also exceeds the baseline performance of space-grade compression standards such as [CCSDS 121.0-B-3](https://ccsds.org/wp-content/uploads/gravity_forms/5-448e85c647331d9cbaf66c096458bdd5/2025/01//121x0b3.pdf?gv-iframe=true), making HMSE potentially suitable for satellite and aerospace applications.
 
 **Rationale for 5:1 Threshold:** This threshold represents the engineering trade-off point where storage density improvements and energy savings (transmission, storage costs, archival) begin to substantially outweigh the added implementation complexity and computational overhead of multi-layer processing in resource-constrained environments. Below 5:1, simpler single-pass algorithms provide better engineering economics.
 
@@ -18,17 +28,23 @@ It establishes a formal process to empirically investigate the system's **compre
 This validation methodology was **pre-registered** before data collection to prevent p-hacking and HARKing (Hypothesizing After Results are Known).
 
 **Pre-registration includes:**
-- Hypotheses (H₀ and H₁)
-- Sample sizes and stopping rules
-- Statistical tests and significance thresholds
-- Primary vs. exploratory analyses
+- **Hypotheses**: H₀ (null) and H₁ (alternative) for primary and secondary tests
+- **Sample sizes**: n = 30 runs per configuration per corpus (120 total runs minimum)
+- **Stopping rules**: Fixed sample size (no optional stopping based on intermediate results)
+- **Statistical tests**: Two-sample t-test (HMSE vs BZ2), one-sample t-test (HMSE vs 5:1 threshold), α = 0.05
+- **Primary vs. exploratory analyses**: Primary = CF comparison, Exploratory = per-layer contribution analysis
 
 **Deviations from plan:**
-Any deviations from this methodology during execution will be documented in `VALIDATION_REPORT.md` with justification.
+Any deviations from this methodology during execution will be documented in `VALIDATION_REPORT.md` with:
+- Justification for deviation
+- Impact on validity
+- Corrective measures taken
 
 **Open Science Commitment:**
-- All raw data, scripts, and logs archived in `/validation/`
-- Pre-registered plan available at: `[OSF/Zenodo DOI]`
+- All raw data, scripts, and logs archived in `/validation/` directory
+- Pre-registered plan available at: `[OSF/Zenodo DOI to be added]`
+- Dataset mirrors archived at: `[Institutional repository URL]`
+- Replication package: `[GitHub release URL]/validation/replication-package-v1.0.tar.gz`
 
 ---
 
@@ -59,15 +75,22 @@ Any deviations from this methodology during execution will be documented in `VAL
 
 ### 3.1 Hardware Environment
 
-| Component | Description |
-|------------|-------------|
-| **MCU** | ESP32-S3 (Dual Xtensa LX7, 240 MHz, 512 KB SRAM + 8 MB PSRAM) |
-| **Input Storage** | 128 GB microSD (SDMMC interface, pre-loaded with Wikipedia corpus) |
-| **Output Storage** | 8 GB microSD (SPI interface, receives compressed archive) |
-| **Power** | USB-C 5 V @ 500 mA (max), power logging via INA219 |
-| **Firmware Framework** | ESP-IDF v5.3 + FreeRTOS kernel |
-| **Interfaces Used** | SDMMC (input SD, 4-bit mode), SPI (output SD, 40 MHz), UART debug |
-| **Compiler Flags** | `-O2`, `-ffast-math`, `-mlongcalls`, `-mfix-esp32-psram-cache-issue` |
+| Component | Specification | Unit Standard |
+|------------|---------------|---------------|
+| **MCU** | ESP32-S3 n16r8 (Dual Xtensa LX7, 240 MHz, 512 KiB SRAM + 8 MiB PSRAM) | Binary (KiB, MiB) for memory |
+| **Input Storage** | 16 GB microSD (SDMMC interface, pre-loaded with test corpora) | Decimal (GB) per SD card spec |
+| **Output Storage** | 8 GB microSD (SPI interface, receives compressed archive per test) | Decimal (GB) per SD card spec |
+| **Power** | USB-C 5 V @ 500 mA max (P_max = 2.5 W), power logging via INA219 | Watts (W), Watt-hours (Wh) |
+| **Firmware Framework** | ESP-IDF v5.3.0 (exact version TBD) + FreeRTOS kernel | — |
+| **Interfaces Used** | SDMMC (input SD, 4-bit mode @ 40 MHz), SPI (output SD, 40 MHz), UART debug @ 115200 bps | — |
+| **Compiler Flags** | `-O2`, `-ffast-math`, `-mlongcalls`, `-mfix-esp32-psram-cache-issue` | GCC 13.2.0 |
+
+**Unit Conventions:**
+- **Memory (SRAM, PSRAM)**: Binary units (KiB = 2^10 bytes, MiB = 2^20 bytes)
+- **Storage (SD cards)**: Decimal units (GB = 10^9 bytes, per manufacturer specification)
+- **Throughput**: MB/s = 10^6 bytes/second (decimal, matches SD card datasheets)
+- **Energy**: Watt-hours (Wh), milliwatt-hours (mWh)
+- **Power**: Watts (W), milliwatts (mW)
 
 ### 3.2 Software Stack
 - HMSE firmware components:
@@ -80,10 +103,12 @@ Any deviations from this methodology during execution will be documented in `VAL
 
 ### 3.3 Reproducibility Requirements
 
-**Software Versions:**
-- ESP-IDF: v5.3.0 (commit hash: `[to be specified]`)
-- Python: 3.11.6
-- Toolchain: `xtensa-esp32s3-elf-gcc` 13.2.0
+**Software Versions (Exact Specifications for Reproducibility):**
+- **ESP-IDF**: v5.3.0 (commit hash to be recorded pre-testing, format: `git rev-parse HEAD`)
+- **Python**: 3.11.6 (for analysis scripts)
+- **Toolchain**: `xtensa-esp32s3-elf-gcc` 13.2.0
+- **Analysis Libraries**: `numpy` 1.24.0, `matplotlib` 3.7.0, `scipy` 1.10.0
+- **Operating System (host)**: Ubuntu 22.04 LTS (kernel 5.15.0) for baseline BZ2 comparisons
 
 **Random Seed Control:**
 
@@ -107,10 +132,19 @@ To ensure **bitwise reproducibility**, all random operations use fixed seeds:
 - Compiler flags: `-O2 -ffast-math -DCONFIG_SPIRAM_SPEED_80M`
 - All configuration files tagged with git commit SHA
 
-**Data Provenance:**
-- Wikipedia dump: `enwiki-20251015-pages-articles.xml.bz2`
-- SHA-256: `[hash of exact dump used]`
-- Mirror URL: `https://dumps.wikimedia.org/enwiki/20251015/`
+**Data Provenance (Dataset Versioning):**
+
+| Corpus | Source | Version/Date | SHA-256 Hash | Size | Download URL |
+|--------|--------|--------------|--------------|------|--------------|
+| **Wikipedia** | Wikimedia dumps | `enwiki-20251015-pages-articles.xml.bz2` | `[TBD pre-testing]` | 10 GB sample | `https://dumps.wikimedia.org/enwiki/20251015/` |
+| **arXiv** | arXiv bulk data | Papers 2020-2024 bulk download | `[TBD pre-testing]` | 10 GB sample | `https://arxiv.org/help/bulk_data` |
+| **News Articles** | Common Crawl | October 2025 snapshot | `[TBD pre-testing]` | 10 GB sample | `https://commoncrawl.org/` |
+| **GitHub Code** | GH Archive | October 2025 snapshot, popular repos | `[TBD pre-testing]` | 10 GB sample | `https://www.gharchive.org/` |
+
+**Versioning Requirements:**
+- All corpus samples archived with SHA-256 checksums before testing
+- Exact dataset versions documented in `/validation/datasets/MANIFEST.txt`
+- Random sampling seeds recorded for reproducible subset generation
 
 **Replication Package:**
 Available at: `[repository URL]/validation/replication-package-v1.0.tar.gz`
@@ -172,11 +206,18 @@ python validation/verify_determinism.py --config sdkconfig.baseline --runs 3
 
 | Corpus | Source | Size | Hypothesized CF | Redundancy Profile | Test Priority |
 |--------|--------|------|-------------|-------------------|---------------|
-| **Wikipedia** | enwiki dump, random sample | 10 GB | **8-10:1** (high) | Templates, infoboxes, citations | **Best-case benchmark** |
-| **News Articles** | Common Crawl subset | 10 GB | **4-6:1** (medium) | Temporal redundancy, boilerplate | **Realistic case** |
-| **GitHub Code** | GH Archive popular repos | 10 GB | **3-5:1** (medium) | Code redundancy (functions, imports) | **Code vs. text** |
-| **arXiv Papers** | arxiv.org 2020-2024 | 10 GB | **2-3:1** (low) | Unique scientific notation | **Pessimistic case** |
-| **Random Data** | `/dev/urandom` | 1 GB | **1.0:1** (none) | Incompressible | **Worst-case baseline** |
+| **Wikipedia** | `enwiki-20251015-pages-articles.xml.bz2` | October 15, 2025 | 10.0 | **8-10:1** (high) | Templates, infoboxes, citations | **Best-case benchmark** |
+| **News Articles** | Common Crawl `CC-MAIN-2025-40` | October 2025 | 10.0 | **4-6:1** (medium) | Temporal redundancy, boilerplate | **Realistic case** |
+| **GitHub Code** | GH Archive popular repos (stars > 1000) | October 2025 snapshot | 10.0 | **3-5:1** (medium) | Code redundancy (functions, imports) | **Code vs. text** |
+| **arXiv Papers** | arXiv bulk data `cs.*`, `math.*` categories | Papers 2020-2024 | 10.0 | **2-3:1** (low) | Unique scientific notation | **Pessimistic case** |
+| **Random Data** | `/dev/urandom` with seed 0xDEADBEEF | Generated pre-test | 1.0 | **1.0:1** (none) | Incompressible (entropy = 8.0 bits/byte) | **Worst-case baseline** |
+
+**Sampling Methodology:**
+- **Wikipedia**: Random stratified sample across all categories (seed: 42)
+- **arXiv**: Most recent 10,000 papers from cs.* and math.* (sorted by date)
+- **News**: Random 10,000 articles from Common Crawl (seed: 42)
+- **GitHub**: Top 100 repos by stars (Python, JavaScript, C/C++), concatenated source files
+- **Random**: Generated once, archived, reused for all tests (deterministic)
 
 ### 4.2 Success Criterion (Pre-Registered)
 
@@ -209,18 +250,18 @@ python validation/verify_determinism.py --config sdkconfig.baseline --runs 3
 
 ## 5. Evaluation Metrics
 
-| Category | Metric | Description |
-|-----------|---------|-------------|
-| **Compression** | **Total compression factor (CF)** | Input / output ratio after full pipeline |
-| | **Per-layer gain** | Ratio improvement contributed by L1–L4 individually |
-| **Integrity** | **Reconstruction fidelity** | Byte-exact match after full encode/decode cycle |
-| **Performance** | **Batch processing speed** | KB/s processed during compression pipeline (determines total completion time, not feasibility) |
-| | **Total batch completion time** | Hours required to compress full 75 GB corpus |
-| **Resource Usage** | **PSRAM usage** | Peak allocation (tracked via `heap_caps_get_free_size`) |
-| | **Flash I/O throughput** | MB/s from SDMMC driver metrics |
-| **Power** | **Average W consumed** | Measured with INA219 over 1 minute sample window |
-| **Deduplication** | **Unique chunk ratio** | Unique chunks / total chunks (%) |
-| | **Similarity hit rate** | LSH matches / candidate pairs (%) |
+| Category | Metric | Formal Definition | Unit | Measurement Method |
+|-----------|---------|-------------------|------|-------------------|
+| **Compression** | **Total compression factor (CF)** | $CF = \frac{S_{input}}{S_{output}}$ | Unitless ratio | File size comparison (bytes) |
+| | **Per-layer gain** | $CF_i = \frac{S_{in,i}}{S_{out,i}}$ for layer i | Unitless ratio | Per-layer output measurement |
+| **Integrity** | **Reconstruction fidelity** | $\text{SHA-256}(D(C(x))) = \text{SHA-256}(x)$ | Boolean (pass/fail) | Cryptographic hash comparison |
+| **Performance** | **Batch processing speed** | $v = \frac{S_{processed}}{t_{elapsed}}$ | MB/s (10^6 bytes/s) | SDMMC/timer measurements |
+| | **Total batch completion time** | $T_{batch} = \frac{S_{corpus}}{v_{avg}}$ | Hours (h) | Wall-clock time per 10 GB corpus |
+| **Resource Usage** | **PSRAM usage** | $M_{peak} = \max(M(t))$ | MiB (2^20 bytes) | `heap_caps_get_free_size()` |
+| | **Flash I/O throughput** | $v_{IO} = \frac{B_{transferred}}{t_{elapsed}}$ | MB/s (10^6 bytes/s) | SDMMC driver metrics |
+| **Power** | **Average power consumed** | $P_{avg} = \frac{1}{T}\int_0^T P(t) dt$ | Watts (W) | INA219 @ 10 Hz over 60s windows |
+| **Deduplication** | **Unique chunk ratio** | $R_{unique} = \frac{N_{unique}}{N_{total}}$ | Percentage (%) | Hash table entry count |
+| | **Similarity hit rate** | $R_{LSH} = \frac{N_{LSH\ matches}}{N_{candidate\ pairs}}$ | Percentage (%) | LSH collision count / probes |
 
 ---
 
@@ -228,13 +269,13 @@ python validation/verify_determinism.py --config sdkconfig.baseline --runs 3
 
 To validate the energy break-even analysis (README.md §5.7), the following energy metrics must be measured:
 
-| Metric | Measurement Method | Target | Purpose |
-|--------|-------------------|--------|---------|
-| **Compression power** | INA219 @ 10 Hz sampling | 0.5 W ± 0.05 W | Validate power budget assumption |
-| **Compression energy** | $\int P(t) \, dt$ over full batch | 18 Wh (75 GB corpus) | Total energy cost |
-| **Energy per GB** | $E_{\text{compress}} / \text{Size}$ | 0.24 Wh/GB | Efficiency metric |
-| **Break-even CF (measured)** | Using measured $P_{\text{compress}}$ | ~1.02:1 (1 Mbps) | Validate theoretical model |
-| **ROI (measured)** | $\frac{E_{\text{saved}}}{E_{\text{compress}}}$ | ≥ 36× @ CF=5:1 | Validate threshold justification |
+| Metric | Formal Definition | Measurement Method | Target | Unit | Purpose |
+|--------|-------------------|-------------------|--------|------|---------|
+| **Compression power** | $P_{avg} = \frac{1}{T}\int_0^T P(t) dt$ | INA219 @ 10 Hz sampling | 0.5 W ± 0.05 W | Watts (W) | Validate power budget assumption |
+| **Compression energy** | $E = \int_0^T P(t) \, dt$ | Integrate power over batch | 2.5 Wh (10 GB corpus) | Watt-hours (Wh) | Total energy cost per corpus |
+| **Energy per GB** | $\eta = \frac{E_{\text{compress}}}{S_{\text{input}}}$ | $E$ / input size | 0.25 Wh/GB | Wh/GB | Efficiency metric |
+| **Break-even CF** | $CF_{min} = \frac{E_{tx,uncompressed}}{E_{tx,uncompressed} - E_{compress}}$ | Using measured $P_{\text{compress}}$ | ~1.02:1 (1 Mbps) | Unitless | Validate theoretical model |
+| **ROI (measured)** | $ROI = \frac{E_{\text{saved}}}{E_{\text{compress}}}$ | Energy savings / compression cost | ≥ 35× @ CF=5:1 | Unitless | Validate threshold justification |
 
 **Validation Test (6-Hour Continuous Run):**
 

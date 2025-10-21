@@ -15,3 +15,4 @@ COPY energy_calculator.py .
 # Set entrypoint
 ENTRYPOINT ["python", "energy_calculator.py"]
 
+
