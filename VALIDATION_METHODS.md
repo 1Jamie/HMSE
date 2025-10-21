@@ -340,8 +340,8 @@ Expected: ROI ≥ 30× (allowing margin for measurement error vs. theoretical 36
 - **Statistical test**: Two-sample t-test (HMSE vs. BZ2)
 
 **Secondary Hypothesis (One-Tailed, if H₁ confirmed):**
-- **H₀**: μ_CF ≤ 5.0 (Below MVP threshold)
-- **H₁**: μ_CF > 5.0 (Exceeds MVP threshold)
+- **H₀**: μ_CF ≤ 5.0 (Below operational threshold)
+- **H₁**: μ_CF > 5.0 (Exceeds operational threshold)
 - **Significance level**: α = 0.05
 
 **Sample Size and Power Analysis (Corrected):**
@@ -543,7 +543,7 @@ While this validation plan is comprehensive, the **critical path** to demonstrat
 ### 9.2 Hypothesis Testing
 
 ```python
-# Example: Test if HMSE CF > 5:1 (MVP threshold)
+# Example: Test if HMSE CF > 5:1 (operational threshold)
 from scipy import stats
 cf_samples = [5.2, 5.8, 6.1, ...]  # n=30 trials
 t_stat, p_value = stats.ttest_1samp(cf_samples, popmean=5.0, alternative='greater')
@@ -581,7 +581,7 @@ print(f"t={t_stat:.3f}, p={p_value:.4f}")
 
 | Category | Anticipated Range | Interpretation |
 |-----------|------------------|----------------|
-| **Compression Factor** | 5–9.4 : 1 | Meets MVP–target range |
+| **Compression Factor** | 5–9.4 : 1 | Meets operational threshold–target range |
 | **PSRAM Utilization** | ≤ 7 MB peak | Within ESP32-S3 limits |
 | **Throughput** | 200–500 KB/s | Practical for offline corpus storage |
 | **Power Draw** | ≤ 0.5 W avg | Sub-watt operation feasible |
@@ -704,6 +704,7 @@ This checklist defines the **step-by-step process** to execute the HMSE validati
 **Platform:** ESP32-S3 (Dual-core Xtensa LX7)  
 **Changelog:**
 - **v1.3 (Oct 20):** **Architectural update, multi-corpus validation framework & research refinement:**
+  - **Terminology change**: Reworded to use 'operational threshold' instead of "mvp"
   - **Research Question**: Reframed to "Can useful compression ratios be achieved in very low-power environments (<1W)?"; defined useful as CF ≥ 5:1 (exceeds BZ2, potential CCSDS 121.0-B-3 compliance)
   - **Testing Paradigm**: Shifted from Wikipedia-centric to **diverse corpus testing** (4 × 10 GB samples: Wikipedia, arXiv, News, GitHub) tested in **separate runs**
   - **Success Criterion**: Changed to **"CF ≥ 5:1 on ≥50% of corpora"** (at least 2 out of 4), addressing selection bias; promoted diverse corpora to primary test set (Section 4.1)

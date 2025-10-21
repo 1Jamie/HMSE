@@ -892,7 +892,7 @@ CF_min = 111 Wh / (111 Wh - 2.5 Wh) = 1.023:1
 | **1.0:1 (none)** | 0 Wh | 111 Wh | 111 Wh | — | — |
 | **2.0:1** | 2.5 Wh | 55.5 Wh | 58 Wh | 53 Wh | **21×** |
 | **3.0:1 (BZ2)** | 2.5 Wh | 37 Wh | 39.5 Wh | 71.5 Wh | **29×** |
-| **5.0:1 (MVP)** | 2.5 Wh | 22.2 Wh | 24.7 Wh | 86.3 Wh | **35×** |
+| **5.0:1 (operational threshold)** | 2.5 Wh | 22.2 Wh | 24.7 Wh | 86.3 Wh | **35×** |
 | **9.0:1 (Wikipedia)** | 2.5 Wh | 12.3 Wh | 14.8 Wh | 96.2 Wh | **38×** |
 
 **ROI Definition**: $ROI = \frac{E_{\text{saved}}}{E_{\text{compress}}} = \frac{E_{\text{total}}(CF=1) - E_{\text{total}}(CF)}{E_{\text{compress}}}$
@@ -2829,6 +2829,7 @@ void benchmark_psram_lookup(void) {
 **Platform:** ESP32-S3 (Dual-core Xtensa LX7)
 **Changelog:**
 - **v1.3 (Oct 20):** **Major architectural pivot, multi-corpus validation framework & research refinement:**
+  - **Terminology change**: Reworded to use 'operational threshold' instead of "mvp"
   - **Changelog Numbering**: Apparently I skipped v1.2 so the numbers have been shifted to fill the gap
   - **Architecture**: Replaced USB streaming model with dual-SD batch processing; removed real-time throughput constraints
   - **Testing Paradigm**: Shifted from Wikipedia-centric (75 GB → 8 GB = 9.375:1 single target) to **diverse corpus testing** (4 × 10 GB samples: Wikipedia, arXiv, News, GitHub) tested in **separate runs** with output card reused between tests
