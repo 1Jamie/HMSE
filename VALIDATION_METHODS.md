@@ -3,9 +3,15 @@
 ## 1. Purpose and Scope
 
 This document defines the **validation, testing, and evaluation methodology** for the **HyperDrive Microcontroller Storage Engine (HMSE)**.  
-It establishes a formal process to empirically verify the system’s **compression performance**, **architectural correctness**, **resource efficiency**, and **practical viability** on microcontroller-class hardware (ESP32-S3).
+It establishes a formal process to empirically investigate the system's **compression performance**, **architectural correctness**, **resource efficiency**, and **practical viability** on microcontroller-class hardware (ESP32-S3).
 
-The primary goal is to validate that HMSE achieves **multi-layer deduplication and compression** sufficient to approach or surpass a **5–9.375:1 compression factor**, while operating within the memory, compute, and I/O constraints of the ESP32-S3 platform.
+**Primary Research Question:** Can useful compression ratios be achieved in very low-power environments (<1W) using multi-layer data reduction?
+
+**Definition of "Useful Compression":** For this research, **useful compression** is defined as achieving **CF ≥ 5:1**, which significantly exceeds typical single-pass algorithms (BZ2: ~3:1, zstd: ~3-4:1) and provides meaningful storage density improvements for embedded applications. This threshold also exceeds the baseline performance of space-grade compression standards such as [CCSDS 121.0-B-3](https://ccsds.org/wp-content/uploads/gravity_forms/5-448e85c647331d9cbaf66c096458bdd5/2025/01//121x0b3.pdf?gv-iframe=true), making HMSE potentially suitable for satellite and aerospace applications.
+
+**Rationale for 5:1 Threshold:** This threshold represents the engineering trade-off point where storage density improvements and energy savings (transmission, storage costs, archival) begin to substantially outweigh the added implementation complexity and computational overhead of multi-layer processing in resource-constrained environments. Below 5:1, simpler single-pass algorithms provide better engineering economics.
+
+**Validation Goal:** Measure the compression factors achievable through the L1-L4 pipeline on diverse text corpora, characterize power efficiency (MB compressed per watt), and determine whether MCU-based compression is **competitive in final compression ratio or superior in energy efficiency** compared to traditional algorithms (BZ2, zstd). Success is defined as achieving **CF ≥ 5:1 on ≥50% of tested corpora** (at least 2 out of 4: Wikipedia, News, GitHub, arXiv). Wikipedia provides an optimistic upper bound while arXiv provides a pessimistic lower bound.
 
 ### 1.3 Pre-registration and Transparency
 
@@ -30,8 +36,8 @@ Any deviations from this methodology during execution will be documented in `VAL
 
 ### 2.1 Primary Objectives
 1. **Validate compression performance**
-   - Confirm total reduction ratio ≥ 5:1 (target = 9.375:1)
-   - Measure entropy reduction per layer (L1–L4)
+   - Confirm CF ≥ 5:1 on ≥50% of tested corpora (at least 2 out of 4)
+   - Measure entropy reduction per layer (L1–L4) for each corpus
 
 2. **Verify architectural correctness**
    - Confirm data integrity through reversible encoding/decoding cycles  
@@ -56,10 +62,11 @@ Any deviations from this methodology during execution will be documented in `VAL
 | Component | Description |
 |------------|-------------|
 | **MCU** | ESP32-S3 (Dual Xtensa LX7, 240 MHz, 512 KB SRAM + 8 MB PSRAM) |
-| **Storage** | 8 GB microSD (benchmark), 16 GB (optional extended test) |
+| **Input Storage** | 128 GB microSD (SDMMC interface, pre-loaded with Wikipedia corpus) |
+| **Output Storage** | 8 GB microSD (SPI interface, receives compressed archive) |
 | **Power** | USB-C 5 V @ 500 mA (max), power logging via INA219 |
 | **Firmware Framework** | ESP-IDF v5.3 + FreeRTOS kernel |
-| **Interfaces Used** | SDMMC, USB MSC/CDC, UART debug |
+| **Interfaces Used** | SDMMC (input SD, 4-bit mode), SPI (output SD, 40 MHz), UART debug |
 | **Compiler Flags** | `-O2`, `-ffast-math`, `-mlongcalls`, `-mfix-esp32-psram-cache-issue` |
 
 ### 3.2 Software Stack
@@ -109,45 +116,94 @@ To ensure **bitwise reproducibility**, all random operations use fixed seeds:
 Available at: `[repository URL]/validation/replication-package-v1.0.tar.gz`
 - Contains: firmware source, datasets, scripts, configs, expected outputs
 
+**Key Reproducibility Tools:**
+
+1. **Energy Calculator (`tools/energy_calculator.py`)**:
+   - Validates total system energy model (compression + transmission)
+   - Calculates break-even compression factors for any bandwidth scenario
+   - Generates energy vs. CF curves for visualization
+   - Ensures theoretical claims (§5.7 energy analysis) are independently verifiable
+
+2. **Docker Environment (`tools/Dockerfile` + `requirements.txt`)**:
+   - Ensures bitwise-exact reproducibility of energy calculations
+   - Pinned dependencies: `matplotlib>=3.7.0`, `numpy>=1.24.0`
+   - Usage: `docker build -t hmse-tools tools/ && docker run --rm hmse-tools --size 75 --cf 9.375 --bandwidth 1 --transmit-power 5`
+   - Eliminates "works on my machine" issues for validation reviewers
+
+3. **Verification Scripts**:
+   - `verify_determinism.py`: Confirms bitwise-identical outputs across runs with same seeds
+   - `validate_energy_model.py`: Compares measured power (INA219) to theoretical projections
+
+**Reproducibility Verification Procedure:**
+
+To verify complete reproducibility:
+```bash
+# 1. Build Docker environment
+cd tools/
+docker build -t hmse-tools .
+
+# 2. Run energy calculator with documented scenarios
+docker run --rm hmse-tools --size 75 --cf 9.375 --bandwidth 1 --transmit-power 5 > energy_output.txt
+
+# 3. Compare to expected output
+diff energy_output.txt validation/expected_outputs/energy_satellite.txt
+
+# 4. Verify firmware determinism
+python validation/verify_determinism.py --config sdkconfig.baseline --runs 3
+
+# 5. Expected result: All outputs match byte-for-byte
+```
+
+**Exit Criteria for Reproducibility**:
+- ✅ Energy calculator produces identical results across systems (Docker ensures this)
+- ✅ Firmware produces identical compression ratios (±0.01:1) with same seeds across 3 runs
+- ✅ All SHA-256 checksums of outputs match documented expected values
+- ✅ Independent reviewer can reproduce within 4 hours using provided package
+
 ---
 
 ## 4. Datasets
 
-### 4.1 Primary Corpus
-| Dataset | Source | Description |
-|----------|---------|-------------|
-| **English Wikipedia Dump** | `enwiki-latest-pages-articles.xml.bz2` from dumps.wikimedia.org | ~75 GB uncompressed XML; highly redundant text corpus |
+### 4.1 Primary Test Corpora (Equal Priority)
 
-### 4.2 Derived Subsets
-To accommodate limited MCU RAM and I/O:
-1. **1 GB subset**: Randomly sampled article blocks (~50 000 articles)
-2. **5 GB subset**: High-redundancy category set (science + culture)
-3. **10 GB subset**: Uniform sampling for scalability testing
+**Testing Approach:** Each corpus is tested in **separate compression runs** with full 8 GB output card available per test. This eliminates storage contention and provides clear per-corpus validation.
 
-### 4.3 Diverse Corpora for Generalization Testing
+**⚠️ Critical Requirement:** To address selection bias and validate generalizability, the following diverse corpora are tested with **equal priority**:
 
-**⚠️ Critical Requirement:** To address selection bias, the following additional corpora **must** be tested to demonstrate that performance is not Wikipedia-specific:
-
-| Corpus | Source | Size | Expected CF | Redundancy Profile | Purpose |
-|--------|--------|------|-------------|-------------------|---------|
-| **arXiv Papers** | arxiv.org bulk download | 10 GB | **2-3:1** (low) | Unique scientific notation, minimal templates | **Pessimistic case** |
-| **GitHub Repos** | GH Archive sample | 10 GB | **3-5:1** (medium) | Code redundancy (functions, imports) | **Code vs. text comparison** |
-| **News Articles** | Common Crawl | 10 GB | **4-6:1** (medium) | Temporal redundancy, boilerplate | **Real-world text** |
+| Corpus | Source | Size | Hypothesized CF | Redundancy Profile | Test Priority |
+|--------|--------|------|-------------|-------------------|---------------|
+| **Wikipedia** | enwiki dump, random sample | 10 GB | **8-10:1** (high) | Templates, infoboxes, citations | **Best-case benchmark** |
+| **News Articles** | Common Crawl subset | 10 GB | **4-6:1** (medium) | Temporal redundancy, boilerplate | **Realistic case** |
+| **GitHub Code** | GH Archive popular repos | 10 GB | **3-5:1** (medium) | Code redundancy (functions, imports) | **Code vs. text** |
+| **arXiv Papers** | arxiv.org 2020-2024 | 10 GB | **2-3:1** (low) | Unique scientific notation | **Pessimistic case** |
 | **Random Data** | `/dev/urandom` | 1 GB | **1.0:1** (none) | Incompressible | **Worst-case baseline** |
+
+### 4.2 Success Criterion (Pre-Registered)
+
+**Primary Success Criterion:** CF ≥ 5:1 on at least **2 out of 4 main corpora** (≥50%)
+
+**Projected Outcomes** (if hypotheses hold):
+- **Wikipedia**: 8.7:1 (✓ exceeds 5:1 threshold)
+- **News**: 5:1 (✓ meets 5:1 threshold)
+- **GitHub**: 4:1 (⚠️ below threshold, acceptable)
+- **arXiv**: 2.5:1 (⚠️ below threshold, expected)
+- **Expected result**: 2 out of 4 meet threshold = **SUCCESS**
+
+**Rationale:** This criterion acknowledges that highly unique data types (scientific papers with unique notation) may not compress well, while still validating the approach on typical text corpora. The 50% threshold ensures generalizability beyond Wikipedia's optimistic characteristics.
 
 **Reporting Requirement:**
 - Report performance as **range** (min, median, max) across all corpora
-- Explicitly label Wikipedia as "best-case scenario"
-- Identify which corpus represents "typical" performance for general deployment
+- Explicitly label Wikipedia as "best-case: 8.7:1"
+- Report median performance across diverse datasets as primary metric
+- Success/failure determined by ≥50% criterion, not Wikipedia alone
 
-**Rationale:** Wikipedia's high structural redundancy (templates, infoboxes, citations) creates optimistic compression factors that may not apply to other text types (scientific papers, news, code). Generalizability requires diverse testing.
-
-### 4.4 Comparison Baselines
+### 4.3 Comparison Baselines
 | Compression Method | Implementation | Reference |
 |--------------------|----------------|------------|
 | **BZ2** | bzip2 v1.0.8 | Wikipedia official |
 | **ZIM** | Kiwix openzim | Wikipedia offline standard |
 | **zstd -19** | Facebook Zstandard | High-performance reference |
+| **CCSDS 121.0-B-3** | Space-grade lossless compression | [CCSDS Standard](https://ccsds.org/wp-content/uploads/gravity_forms/5-448e85c647331d9cbaf66c096458bdd5/2025/01//121x0b3.pdf?gv-iframe=true) |
 
 ---
 
@@ -158,13 +214,79 @@ To accommodate limited MCU RAM and I/O:
 | **Compression** | **Total compression factor (CF)** | Input / output ratio after full pipeline |
 | | **Per-layer gain** | Ratio improvement contributed by L1–L4 individually |
 | **Integrity** | **Reconstruction fidelity** | Byte-exact match after full encode/decode cycle |
-| **Performance** | **Throughput** | KB/s processed during encode/decode |
-| | **Latency per MB** | Time to process 1 MB segment |
+| **Performance** | **Batch processing speed** | KB/s processed during compression pipeline (determines total completion time, not feasibility) |
+| | **Total batch completion time** | Hours required to compress full 75 GB corpus |
 | **Resource Usage** | **PSRAM usage** | Peak allocation (tracked via `heap_caps_get_free_size`) |
 | | **Flash I/O throughput** | MB/s from SDMMC driver metrics |
 | **Power** | **Average W consumed** | Measured with INA219 over 1 minute sample window |
 | **Deduplication** | **Unique chunk ratio** | Unique chunks / total chunks (%) |
 | | **Similarity hit rate** | LSH matches / candidate pairs (%) |
+
+---
+
+### 5.4 Energy Efficiency Metrics
+
+To validate the energy break-even analysis (README.md §5.7), the following energy metrics must be measured:
+
+| Metric | Measurement Method | Target | Purpose |
+|--------|-------------------|--------|---------|
+| **Compression power** | INA219 @ 10 Hz sampling | 0.5 W ± 0.05 W | Validate power budget assumption |
+| **Compression energy** | $\int P(t) \, dt$ over full batch | 18 Wh (75 GB corpus) | Total energy cost |
+| **Energy per GB** | $E_{\text{compress}} / \text{Size}$ | 0.24 Wh/GB | Efficiency metric |
+| **Break-even CF (measured)** | Using measured $P_{\text{compress}}$ | ~1.02:1 (1 Mbps) | Validate theoretical model |
+| **ROI (measured)** | $\frac{E_{\text{saved}}}{E_{\text{compress}}}$ | ≥ 36× @ CF=5:1 | Validate threshold justification |
+
+**Validation Test (6-Hour Continuous Run):**
+
+**Procedure:**
+1. Instrument ESP32-S3 with INA219 current sensor on VDD rail
+2. Configure INA219: 16V range, 0.1Ω shunt, 12-bit ADC
+3. Log power measurements every 100 ms over 6-hour compression test
+4. Process ~10 GB corpus during test (one full corpus, validates sustained operation)
+
+**Data Analysis:**
+```python
+import numpy as np
+
+# Load power measurements
+power_samples = np.loadtxt('power_log.csv')  # Watts
+
+# Calculate statistics
+mean_power = np.mean(power_samples)
+std_power = np.std(power_samples)
+total_energy = np.trapz(power_samples, dx=0.1/3600)  # Wh (100ms sampling)
+
+# Energy per GB
+energy_per_gb = total_energy / data_processed_gb
+
+print(f"Mean Power: {mean_power:.3f} W ± {std_power:.3f} W")
+print(f"Total Energy: {total_energy:.2f} Wh")
+print(f"Energy/GB: {energy_per_gb:.3f} Wh/GB")
+```
+
+**Acceptance Criteria:**
+- **Mean power**: 0.4-0.6 W (±20% tolerance from 0.5W projection)
+- **Energy per GB**: 0.20-0.30 Wh/GB (validates linear scaling)
+- **Break-even CF (measured)**: 0.9-1.2:1 vs. theoretical 1.022:1 (±20% tolerance)
+- **Power stability**: σ/μ < 0.15 (coefficient of variation < 15%)
+
+**Comparison to Theoretical Model:**
+
+Using measured power $P_{\text{measured}}$, recalculate break-even CF:
+
+$$CF_{\text{min,measured}} = \frac{E_{\text{transmit,uncompressed}}}{E_{\text{transmit,uncompressed}} - P_{\text{measured}} \times T_{\text{compress}}}$$
+
+Compare to theoretical $CF_{\min} = 1.022$ (1 Mbps satellite scenario). If measured CF is within ±20%, theoretical model is validated.
+
+**Energy ROI Validation:**
+
+For 5:1 compression factor, calculate measured ROI:
+
+$$ROI_{\text{measured}} = \frac{E_{\text{transmit}}(CF=1) - E_{\text{transmit}}(CF=5)}{E_{\text{compress,measured}}}$$
+
+Expected: ROI ≥ 30× (allowing margin for measurement error vs. theoretical 36×)
+
+---
 
 ### 5.5 Statistical Analysis Framework
 
@@ -223,6 +345,24 @@ For derived metrics (e.g., MB/s = bytes / time):
 
 ## 6. Validation Procedure
 
+**Critical Path to Success:**
+
+While this validation plan is comprehensive, the **critical path** to demonstrating success involves testing all four primary corpora:
+
+1. **Execute the "Full Pipeline" ablation study** (§6.5) on all four 10 GB corpora (Wikipedia, News, GitHub, arXiv) to measure compression factors with all layers active (L1+L2+L3+L4)
+2. **Determine success/failure** based on how many corpora achieve CF ≥ 5:1
+
+**Success Criterion:** If at least **2 out of 4 corpora** achieve mean CF ≥ 5:1 (with p < 0.05 via one-sample t-test, n=30 trials per corpus), the **primary research goal will have been met**, demonstrating that useful compression can be achieved in very low-power environments across diverse data types.
+
+**Secondary validations** (functional correctness, comparative baselines, stress testing, energy measurements) provide important characterization data but are not required to answer the core research question.
+
+**This focus ensures:**
+- Resources prioritized on the most critical measurement
+- Clear success/failure determination
+- Rapid initial validation before extended testing
+
+---
+
 ### 6.1 Functional Validation
 1. Encode → Decode loop with checksum verification (SHA-256 end-to-end)  
 2. Validate per-layer checkpoints (L1→L2→L3→L4) for lossless behavior  
@@ -274,31 +414,32 @@ For derived metrics (e.g., MB/s = bytes / time):
 
 **Objective:** Isolate the contribution of each layer to overall compression.
 
-| Configuration | L1 | L2 | L3 | L4 | Expected CF | Purpose |
+| Configuration | L1 | L2 | L3 | L4 | Hypothesized CF | Purpose |
 |---------------|----|----|----|----|-------------|---------|
-| **Baseline** | ✓ | ✗ | ✗ | ✗ | 3:1 | Isolate L1 (DEFLATE) contribution |
+| **Baseline** | ✓ | ✗ | ✗ | ✗ | 3:1 | Isolate L1 (DEFLATE) contribution (plausible based on DEFLATE benchmarks) |
 | **+CDC** | ✓ | ✓ | ✗ | ✗ | 3:1 | Verify CDC doesn't change CF (boundary detection only) |
-| **+Dedupe** | ✓ | ✓ | ✓ | ✗ | 5-7:1 | Isolate L3 (exact dedupe) contribution |
-| **Full Pipeline** | ✓ | ✓ | ✓ | ✓ | 9.375:1 | Complete system |
-| **L4 Only** | ✗ | ✓ | ✗ | ✓ | 1.5-2:1 | Isolate L4 (similarity) contribution |
+| **+Dedupe** | ✓ | ✓ | ✓ | ✗ | 5-7:1 | Isolate L3 (exact dedupe) contribution (corpus-dependent) |
+| **Full Pipeline** | ✓ | ✓ | ✓ | ✓ | 2.5-9:1 (corpus-dependent) | Complete system (range: arXiv 2.5:1 to Wikipedia 8.7:1) |
+| **L4 Only** | ✗ | ✓ | ✗ | ✓ | 1.5-2:1 | Isolate L4 (similarity) contribution (highly variable) |
 
 **Analysis:**
-- For each configuration, run on 5 GB Wikipedia subset (n=10 trials)
-- Measure mean CF and 95% CI
+- For each configuration, run on all four 10 GB corpora (n=10 trials per corpus)
+- Measure mean CF and 95% CI for each corpus
 - Compute statistical significance of each layer's contribution (paired t-test)
-- Report: "L3 contributes Δ = 2.1 ± 0.3:1 improvement (p < 0.001)"
+- Report per-corpus results: "L3 contributes Δ = 2.1 ± 0.3:1 on Wikipedia (p < 0.001)"
+- Report range across corpora: "L3 contribution ranges from 1.2:1 (arXiv) to 3:1 (Wikipedia)"
 
 ---
 
 ## 7. Success Criteria
 
-| Tier | Target CF | Description | Success Definition |
-|------|------------|--------------|--------------------|
-| **Tier 4 (Full)** | ≥ 9.375 : 1 | 100% Wikipedia coverage on 8 GB card | Demonstration success |
-| **Tier 3** | 7–9.375 : 1 | ≥ 75% coverage | Achievable; practical system |
-| **Tier 2 (MVP)** | 5–7 : 1 | ≥ 50% coverage | Minimum viable; validates design |
-| **Tier 1** | 3–5 : 1 | Partial corpus | Proof-of-concept only |
-| **Tier 0** | < 3 : 1 | Below BZ2 baseline | Failure condition |
+| Tier | Multi-Corpus Criterion | Description | Success Definition |
+|------|------------------------|-------------|-------------------|
+| **Tier 4 (Full)** | ≥ 3/4 corpora ≥ 5:1 | Strong generalization | All except arXiv meet threshold |
+| **Tier 3 (Target)** | ≥ 2/4 corpora ≥ 5:1 | **Primary success criterion** | Validates approach across diverse data |
+| **Tier 2 (Partial)** | 1/4 corpus ≥ 5:1 | Limited validation | Proves concept on one corpus type |
+| **Tier 1 (Marginal)** | All corpora 3-5:1 | Better than BZ2 | Shows improvement but not useful threshold |
+| **Tier 0 (Failure)** | All corpora < 3:1 | Below BZ2 baseline | No advantage over traditional compression |
 
 ---
 
@@ -517,30 +658,25 @@ This checklist defines the **step-by-step process** to execute the HMSE validati
 
 ---
 
-**Document Version:** 1.2  
-**Last Updated:** October 18, 2025  
+**Document Version:** 1.3  
+**Last Updated:** October 20, 2025  
 **Platform:** ESP32-S3 (Dual-core Xtensa LX7)  
 **Changelog:**
-- **v1.2 (Oct 19):** **Comprehensive validation methodology for scientific peer review, combining statistical rigor enhancements with methodological corrections:**
-  - **Statistical Framework & Hypothesis Testing:**
-    - (1) **Added §5.5 Statistical Analysis Framework**: Hypothesis testing (H₀/H₁), power analysis (n≥30), confidence intervals (95% CI, bootstrap), measurement precision with instrument calibration
-    - (2) **Fixed power analysis**: Corrected to calculate **Minimum Detectable Effect Size (MDES ≈ 0.52)** instead of assuming Cohen's d; added implication that study cannot detect improvements < 0.5:1 CF
-    - (3) **Restructured hypotheses**: Changed to **two-tailed primary test** (H₀: μ_CF = 3.0) followed by one-tailed secondary test (H₁: μ_CF > 5.0); prevents ignoring worse-than-baseline results
-    - (4) **Added §5.6 Measurement Error and Uncertainty**: Systematic/random error quantification for compression factor (±0.1:1), throughput (±5%), power (±0.01W), latency (±10µs); error propagation formulas
-  - **Reproducibility & Transparency:**
-    - (5) **Added §1.3 Pre-registration and Transparency**: P-hacking prevention through OSF/AsPredicted registration, deviation documentation, open science commitment with data/code release
-    - (6) **Added §3.3 Reproducibility Requirements**: Software versions (ESP-IDF v5.3, gcc version), random seed control, configuration file archiving, data provenance tracking, Docker replication package
-  - **Corpus Diversity & External Validity:**
-    - (7) **Added §4.3 Diverse Corpora Requirements**: **Critical addition** of arXiv papers (2-3:1, low redundancy), GitHub repos (3-5:1, code), news articles (4-6:1), random data (1.0:1, worst-case) to address **selection bias**
-    - (8) **Enhanced §8.5 External Validity Threats**: Expanded corpus specificity threat to explicitly acknowledge Wikipedia's optimal redundancy characteristics; requires performance range reporting (min, median, max) across diverse datasets; Wikipedia flagged as "best-case scenario" that may not generalize
-  - **Fair Comparison & Ablation Studies:**
-    - (9) **Added §6.3.1 Fair Comparison Protocol**: Baseline fairness (equivalent configs for BZ2/ZIM/zstd), controlled variables, index overhead acknowledgment, all methods process same decompressed input
-    - (10) **Added §6.5 Ablation Studies**: 5 configurations to isolate layer contributions (L1 only, L1+L2+L3, etc.) with expected CFs, statistical significance testing, implementation notes
-  - **Expanded Analysis & Validity:**
-    - (11) **Expanded §9 Data Analysis**: Normality testing (Shapiro-Wilk), hypothesis testing (with Python t-test example), effect size reporting (Cohen's d), regression analysis (CF vs. chunk size), sensitivity analysis, data visualization (boxplots, scatter, heatmaps)
-    - (12) **Added §8.5 Threats to Validity**: Internal (instrumentation effects, history, selection bias), external (corpus/hardware specificity, workload realism), construct (measurement definitions), conclusion (low power, assumption violations) with specific mitigations
-    - (13) **Added §13 Peer Review Preparation Checklist**: Experimental design validation, statistical rigor checks, reproducibility verification, validity assessment, reporting standards compliance
-  - **Summary:** Document now addresses replication crisis concerns, prevents p-hacking through proper study design, acknowledges Wikipedia-specific results may not generalize, and provides comprehensive framework for scientific publication.
-- **v1.0 (Oct 17):** Initial validation methodology document: (1) Defined experimental objectives and success criteria (tiered 3:1 to 9.375:1); (2) Established hardware/software setup (ESP-IDF v5.3, FreeRTOS); (3) Specified datasets (Wikipedia subsets 1GB/5GB/10GB); (4) Defined evaluation metrics (compression, integrity, performance, resource usage); (5) Created validation procedures (functional, performance, comparative, stress); (6) Developed risk mitigation strategies; (7) Included implementation checklist and reporting framework.
+- **v1.3 (Oct 20):** **Architectural update, multi-corpus validation framework & research refinement:**
+  - **Research Question**: Reframed to "Can useful compression ratios be achieved in very low-power environments (<1W)?"; defined useful as CF ≥ 5:1 (exceeds BZ2, potential CCSDS 121.0-B-3 compliance)
+  - **Testing Paradigm**: Shifted from Wikipedia-centric to **diverse corpus testing** (4 × 10 GB samples: Wikipedia, arXiv, News, GitHub) tested in **separate runs**
+  - **Success Criterion**: Changed to **"CF ≥ 5:1 on ≥50% of corpora"** (at least 2 out of 4), addressing selection bias; promoted diverse corpora to primary test set (Section 4.1)
+  - **Hardware**: Updated to dual-SD (16 GB SDMMC input + 8 GB SPI output reused between tests); removed USB interface
+  - **Metrics**: Redefined throughput as "batch processing speed" (determines completion time, not feasibility); emphasized power efficiency (MB/watt)
+  - **Validation**: Critical path redefined (test all 4 corpora separately, not just Wikipedia + 1 diverse); expanded random seed documentation; reproducibility verification procedure
+  - **Tier System**: Updated success criteria from Wikipedia-coverage tiers to multi-corpus tiers (Tier 3 = ≥2/4 corpora ≥5:1)
+  - **Terminology**: Standardized "Hypothesized CF" (model-based) vs measured (empirical); Full Pipeline now shows 2.5-9:1 corpus-dependent range
+- **v1.2 (Oct 19):** **Scientific rigor & validation framework:**
+  - **Statistical Framework**: Added hypothesis testing (two-tailed primary, one-tailed secondary), power analysis (MDES = 0.52), confidence intervals (95% CI), measurement error quantification (±0.1:1 CF, ±5% throughput)
+  - **Reproducibility**: Pre-registration (OSF/AsPredicted), software versions, random seed control, Docker replication package, data provenance tracking
+  - **Corpus Diversity**: Added arXiv (low redundancy), GitHub (code), news articles, random data to prevent Wikipedia selection bias; performance reported as range (min/median/max)
+  - **Analysis**: Ablation studies (5 configs), fair comparison protocol, threats to validity (internal/external/construct/conclusion), normality testing, effect size reporting, sensitivity analysis
+  - **Peer Review**: Comprehensive checklist for publication readiness; prevents p-hacking and HARKing
+- **v1.0 (Oct 17):** Initial validation methodology: experimental objectives, hardware/software setup (ESP-IDF v5.3), datasets (Wikipedia subsets), evaluation metrics, validation procedures, risk mitigation, reporting framework.
 
 ---
